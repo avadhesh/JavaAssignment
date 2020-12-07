@@ -5,9 +5,11 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 
@@ -36,13 +38,56 @@ public class CacheTest {
                 getDeclaredField("cacheMap");
         map.setAccessible(true);
 
-        ConcurrentHashMap<Integer, Future<String>> privateMap = (ConcurrentHashMap<Integer, Future<String>>) map.get(cache);
+        ConcurrentHashMap<Integer, Optional<String>> privateMap = (ConcurrentHashMap<Integer, Optional<String>>) map.get(cache);
 
         assertEquals(privateMap.size(), 1);
         assertEquals(privateMap.get(1).get(), cache.get(1));
 
 
     }
+
+    @Test
+    public void mapSanityCheckTest() throws InterruptedException {
+        AtomicInteger i = new AtomicInteger(0);
+        Function<Integer, String> function = e -> {
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e1) {
+                e1.printStackTrace();
+            }
+            System.out.println("I am here");
+            return String.valueOf(e + i.getAndIncrement());
+        };
+
+        Cache<Integer, String> cache = new CacheImpl<>(function);
+
+        IntStream.range(0,20).unordered().parallel().forEach( e -> {
+            String val = null;
+            try {
+                val = cache.get(1);
+            } catch (InterruptedException e1) {
+                e1.printStackTrace();
+            }
+            System.out.println(val);
+            assertEquals("1", val);
+        });
+
+    }
+
+    @Test(expected = NoSuchElementException.class)
+    public void nullFunctionTest() throws InterruptedException {
+        AtomicInteger i = new AtomicInteger(0);
+        Function<Integer, String> function = e -> {
+
+                return null;
+
+        };
+
+        Cache<Integer, String> cache = new CacheImpl<>(function);
+        cache.get(1);
+    }
+
+
 
 
     @Test

@@ -2,55 +2,60 @@ package com.scb.assignment.cache.impl;
 
 import com.scb.assignment.cache.Cache;
 
+import java.util.HashSet;
+import java.util.NoSuchElementException;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.function.Function;
 
 public class CacheImpl<K, V> implements Cache<K, V> {
 
     private final Function<K, V> cacheFunction;
-    private ConcurrentMap<K, Future<V>> cacheMap;
+    private final ConcurrentMap<K, Optional<V>> cacheMap;
+    private final Set<K> lockedKeys;
 
     public CacheImpl(Function<K, V> function)
     {
         this.cacheFunction = function;
         this.cacheMap = new ConcurrentHashMap<>();
+        this.lockedKeys = new HashSet<>();
     }
 
-    /**
-     * Method to get the value from cached map
-     * Checks for the future object in the map, if present gets the value from the future object
-     * If absent, creates a future task and a callable to get the value from the function
-     * Future acts as a placeholder, and prevents blocking while adding to the cache
-     *
-     * @param key
-     * @return cached value
-     * @throws InterruptedException
-     */
     @Override
-    public V get(K key) throws InterruptedException{
+    public V get(K key) throws InterruptedException, NoSuchElementException {
 
-        Future<V> future = cacheMap.get(key);
+        Optional<V> result = cacheMap.get(key);
 
-        if(future == null) {
-            Callable<V> callable = () -> cacheFunction.apply(key);
-            FutureTask<V> nextTask = new FutureTask<>(callable);
-            cacheMap.putIfAbsent(key, nextTask);
-
-            if(future == null)
-            {
-                future = nextTask;
-                nextTask.run();
+        if(result == null) {
+            try{
+                lock(key);
+                if(cacheMap.get(key) == null) {
+                    result = Optional.ofNullable(cacheFunction.apply(key));
+                    cacheMap.putIfAbsent(key, result);
+                }
+            } finally {
+                unlock(key);
             }
         }
-        try {
-            return future.get();
-        } catch(ExecutionException e)
-        {
-            throw new RuntimeException(e);
-        } catch(InterruptedException e)
-        {
-            cacheMap.remove(key, future);
-            throw e;
+        return cacheMap.getOrDefault(key, Optional.empty()).get();
+
+    }
+
+    private void lock(K key) throws InterruptedException {
+        synchronized (lockedKeys) {
+            while (!lockedKeys.add(key)) {
+                lockedKeys.wait();
+            }
+        }
+
+    }
+
+    private void unlock(K key) {
+        synchronized (lockedKeys) {
+            lockedKeys.remove(key);
+            lockedKeys.notifyAll();
         }
     }
+
 }
